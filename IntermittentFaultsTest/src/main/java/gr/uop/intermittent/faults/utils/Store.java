@@ -16,7 +16,6 @@
  */ 
 package gr.uop.intermittent.faults.utils; 
 
-import gr.uop.intermittentfaults.intermmittentfaultsutils.GlobalParams;
 
 /**
  *

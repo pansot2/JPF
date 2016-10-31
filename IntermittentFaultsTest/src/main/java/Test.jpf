@@ -1,4 +1,5 @@
-+classpath=C:/Users/Panos/Documents/NetBeansProjects/IntermittentFaultsTest/target/classes
++classpath=C:/Users/Takis/Documents/NetBeansProjects/JPF/IntermittentFaultsTest/target/classes
++listener=gov.nasa.jpf.listener.MyListener
 
 target=gr.uop.intermittent.faults.intermittentfaultstest.Test
 
@@ -75,7 +76,7 @@ cg.threads.break_arrays=false
 
 +search.multiple_errors=false
 #search.class = .search.heuristic.BFSHeuristic 
-+search.depth_limit = 50
++search.depth_limit = 20
 
 #+symbolic.min_int=-100
 
