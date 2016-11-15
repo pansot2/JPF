@@ -5,10 +5,14 @@
         <group>
             <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/listener/StateTracker.java</file>
             <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/vm/VM.java</file>
+            <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/jvm/bytecode/MONITORENTER.java</file>
             <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/vm/ChoiceGeneratorBase.java</file>
             <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/vm/ThreadChoiceGenerator.java</file>
             <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/listener/MyListener.java</file>
+            <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/jvm/bytecode/MONITOREXIT.java</file>
+            <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/jvm/bytecode/LockInstruction.java</file>
             <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/vm/ChoiceGenerator.java</file>
+            <file>file:/C:/Users/Takis/Documents/NetBeansProjects/JPF/JPF_CORE/jpf-core/src/main/gov/nasa/jpf/vm/StatisticFieldLockInfoFactory.java</file>
         </group>
     </open-files>
 </project-private>

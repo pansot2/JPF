@@ -25,14 +25,40 @@ target=gr.uop.intermittent.faults.intermittentfaultstest.Test
 # instruct jpf not to stop at first error
 
 #+jpf.report.console.finished=
-
+vm.sourcepath = C:/Users/Takis/Documents/NetBeansProjects/JPF/IntermittentFaultsTest/src/main/java
 #jpf.print_exception_stack = true
 vm.por = true
 vm.por.field_boundaries = true
-vm.por.field_boundaries.never = java.*,javax.*,sun.*
-vm.por.field_boundaries.break =
-vm.por.sync_detection = false
+vm.por.field_boundaries.never = java.*,javax.*,sun.*,org.*
+vm.por.field_boundaries.break = gr.uop.intermittent.faults.*
+#vm.por.sync_detection = true
+vm.por.fieldlockinfo.class=
 vm.gc = true
+vm.shared.sync_detection = true
+
+vm.shared.never_break_fields=\
+java.lang.Thread*.*,\
+java.lang.System.*,\
+java.lang.Runtime.*,\
+java.lang.Boolean.*,\
+java.lang.String.*,\
+java.lang.*.TYPE,\
+java.util.HashMap.EMPTY_TABLE,\
+java.util.HashSet.PRESENT,\
+java.util.concurrent.ThreadPoolExecutor*.*,\
+java.util.concurrent.ThreadPoolExecutor*.*,\
+java.util.concurrent.TimeUnit.*,\
+java.util.concurrent.Exchanger.CANCEL,\
+java.util.concurrent.Exchanger.NULL_ITEM,\
+java.util.concurrent.Executors$DefaultThreadFactory.*,\
+sun.misc.VM.*,\
+sun.misc.SharedSecrets.*,\
+sun.misc.Unsafe.theUnsafe,\
+gov.nasa.jpf.util.test.TestJPF.*
+
+vm.shared.break_on_exposure = true
+vm.shared.skip_finals=true
+vm.shared.skip_static_finals=false
 
 #+vm.insn_factory.class=gov.nasa.jpf.symbc.SymbolicInstructionFactory
 +vm.tree_output=false
@@ -54,7 +80,9 @@ cg.enumerate_random=false
 
 # maximum number of processors returned by Runtime.availableProcessors(). If this is
 # greater than 1, the call represents a ChoiceGenerator
-cg.max_processors=1
+cg.max_processors=4
+
+#vm.por.sync_detection.threshold=1
 
 # if this option is true, when thread is started, CG is not created
 # but thread is added to the pool of threads for later scheduling
@@ -76,7 +104,7 @@ cg.threads.break_arrays=false
 
 +search.multiple_errors=false
 #search.class = .search.heuristic.BFSHeuristic 
-+search.depth_limit = 20
++search.depth_limit = 30
 
 #+symbolic.min_int=-100
 

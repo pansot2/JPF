@@ -45,7 +45,7 @@ public class MONITORENTER extends LockInstruction {
     lastLockRef = objref;
     ElementInfo ei = ti.getModifiableElementInfo(objref);    
     ei = scheduler.updateObjectSharedness(ti, ei, null); // locks most likely belong to shared objects
-    
+
     if (!ti.isLockOwner(ei)){ // we only need to register, block and/or reschedule if this is not a recursive lock
       if (ei.canLock(ti)) {
         // record that this thread would lock the object upon next execution if we break the transition

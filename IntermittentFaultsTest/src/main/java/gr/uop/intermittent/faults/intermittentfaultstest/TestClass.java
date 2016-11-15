@@ -17,6 +17,8 @@
 package gr.uop.intermittent.faults.intermittentfaultstest;
 
 import gr.uop.intermittent.faults.utils.CacheStore;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  *
@@ -26,23 +28,31 @@ public class TestClass {
 
     private int count = 0;
     private  int count2 = 0;
+    private int count3 = 0;
     
     private final static Object countlock = new Object();
     private final static Object count2lock = new Object();
+    private final static Lock l = new ReentrantLock();
     
     public void countMethod() throws Exception {
 
-        for (int i=0; i<10; i++) {
-            synchronized(countlock) {
+        for (int i=0; i<1; i++) {
+            l.lock();
+       //   synchronized(countlock) {
                 count += 1;
-            }
-            CacheStore.cacheStore(this,count,"count","myTestGroup"); 
+                count3++;
+        //    }
+            l.unlock();
+            
 
-       /*     synchronized(count2lock) {
+            synchronized(count2lock) {
                 count2 += 2;
+                count3++;
             }
+            
+            CacheStore.cacheStore(this,count,"count","myTestGroup"); 
             CacheStore.cacheStore(this,count2,"count2","myTestGroup");
-            */
+            
         }
                
     } 
