@@ -1,4 +1,4 @@
-+classpath=C:/Users/Takis/Documents/NetBeansProjects/JPF/IntermittentFaultsTest/target/classes
++classpath=${user.home}/Netbeansprojects/JPF/IntermittentFaultsTest/target/classes
 +listener=gov.nasa.jpf.listener.MyListener
 
 target=gr.uop.intermittent.faults.intermittentfaultstest.Test
