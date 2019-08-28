@@ -698,7 +698,7 @@ public class MyListener extends PropertyListenerAdapter {
                         }
 
                         if (state != null && state.checkFieldRule.isEmpty()) {
-                            System.out.println("Error pattern detected... " + d.lineNumber + " " + d.className + " " + d.fieldName + state.lineNumberSeq.toString() + " " + state.allThreadSeq.toString() + " " + state.log);
+                            errors.add("Error pattern detected... " + d.lineNumber + " " + d.className + " " + d.fieldName + state.lineNumberSeq.toString() + " " + state.allThreadSeq.toString() + " " + state.log);
                             state.resetFieldRule(checkFieldRule);
 
                         }
@@ -804,7 +804,7 @@ public class MyListener extends PropertyListenerAdapter {
                         }
 
                         if (state != null && state.checkFieldRule.isEmpty()) {
-                            System.out.println("Error pattern detected... " + d.lineNumber + " " + d.className + " " + d.fieldName + state.lineNumberSeq.toString() + " " + state.allThreadSeq.toString() + " " + state.log);
+                            errors.add("Error pattern detected... " + d.lineNumber + " " + d.className + " " + d.fieldName + state.lineNumberSeq.toString() + " " + state.allThreadSeq.toString() + " " + state.log);
                             state.resetFieldRule(checkFieldRule);
 
                         }
