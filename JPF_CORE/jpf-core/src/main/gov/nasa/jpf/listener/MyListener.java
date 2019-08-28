@@ -850,6 +850,7 @@ public class MyListener extends PropertyListenerAdapter {
                 fieldStateCloned.threadSeq = DeepClone.deepClone(value2.threadSeq);
                 fieldStateCloned.lineNumberSeq = DeepClone.deepClone(value2.lineNumberSeq);
                 fieldStateCloned.log = value2.log;
+                fieldStateCloned.fType = value2.fType;
                 fieldStateCloned.parentId = value2.parentId;
                 fieldStateCloned.parentDepth = value2.parentDepth;
                 fieldStatesClonedPerThread.put(key2, fieldStateCloned);
