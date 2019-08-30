@@ -386,7 +386,7 @@ public class MyListener extends PropertyListenerAdapter {
         System.out.println("----------------------------------- search finished");
 
         try {
-            printTree(root);
+        //    printTree(root);
             Thread.sleep(10000);
 
             checkFieldRule(root, new HashMap<String, HashMap<String, FieldState>>());
