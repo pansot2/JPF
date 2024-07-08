@@ -1,29 +1,46 @@
+/*
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
 package gov.nasa.jpf.listener;
-
+import com.mongodb.client.model.Filters;
+import com.mongodb.client.MongoCursor;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
+import com.mongodb.BasicDBObject;
+import com.mongodb.DB;
+import com.mongodb.DBCollection;
+import com.mongodb.DBObject;
+import com.mongodb.MongoClient;
+import com.mongodb.MongoClientURI;
+import org.bson.Document;
 import gov.nasa.jpf.PropertyListenerAdapter;
-import gov.nasa.jpf.jvm.bytecode.MONITORENTER;
-import gov.nasa.jpf.jvm.bytecode.MONITOREXIT;
 import gov.nasa.jpf.search.Search;
 import gov.nasa.jpf.util.DeepClone;
 import gov.nasa.jpf.vm.ChoiceGenerator;
 import gov.nasa.jpf.vm.FieldInfo;
 import gov.nasa.jpf.vm.Instruction;
+import gov.nasa.jpf.vm.LocalVarInfo;
+import gov.nasa.jpf.vm.MethodInfo;
 import gov.nasa.jpf.vm.ThreadInfo;
 import gov.nasa.jpf.vm.VM;
 import gov.nasa.jpf.vm.bytecode.FieldInstruction;
+import gov.nasa.jpf.vm.bytecode.LocalVariableInstruction;
 import gov.nasa.jpf.vm.choice.ThreadChoiceFromSet;
+import java.io.BufferedWriter;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class MyListener extends PropertyListenerAdapter {
 
-    Node root = null;
+    Node2 root = null;
+    Node2 current2 = null;
     Node current = null;
     volatile private int depth = 0;
     volatile private int id = 0;
@@ -31,15 +48,12 @@ public class MyListener extends PropertyListenerAdapter {
     Set<String> allowDepth = null;
     Set<String> allowChild = null;
     Set<String> allowThreads = null;
+    boolean notichanges = false;
     HashMap<String, ArrayList<String>> threadsDepMap = null;
     HashMap<Integer, ArrayList<Integer>> allowedPaths = null;
     int previousId = -1;
-    ArrayList<Integer> statesHistory = new ArrayList<Integer>();
-    ArrayList<String> statesAction = new ArrayList<String>();
     StateNode rootNode = new StateNode();
     HashMap<Integer, StateNode> stateMap = new HashMap<>();
-    ArrayList<Integer> statesExcluded = new ArrayList<Integer>();
-    ArrayList<Integer> statesIncluded = new ArrayList<Integer>();
     HashMap<Integer, Node> nodesIncluded = new HashMap<>();
     HashMap<Integer, Boolean> isEndState = new HashMap<>();
     HashMap<Integer, Integer> stateGroups = new HashMap<>();
@@ -50,20 +64,64 @@ public class MyListener extends PropertyListenerAdapter {
     HashSet<String> errors = new HashSet<>();
     HashMap<String, HashSet<String>> threadNames = new HashMap<>();
     int endNodes = 0;
-    HashSet<String> fieldNames = null;
+    HashSet<String> fieldNames = new HashSet<>();
+    HashMap<String, ArrayList<String>> functions = new HashMap<>();
+    HashMap<String,String> paramFields = new  HashMap<>();
+    HashMap<String, ArrayList<String>> functionsMapping = new HashMap<>();
+    Set<String> functionNames = new HashSet<>();
+    BufferedWriter bw;
+    DBCollection collection;
+    DBCollection collection2;
+    DBCollection collection3;
+    DBCollection collection4;
+    MongoCollection<Document> collection11;
+    MongoCollection<Document> collection22;
+    MongoCollection<Document> collection33;
 
     public MyListener() {
-        root = new Node();
+        MongoClient mongoClient = new MongoClient(new MongoClientURI("mongodb://localhost:27017"));
+            DB database = mongoClient.getDB("jpf");
+            MongoDatabase database2 = mongoClient.getDatabase("jpf");
+            collection = database.getCollection("jpfdata");
+            collection2 = database.getCollection("varfieldrelations");
+            collection3 = database.getCollection("varfieldgroups");
+            collection4 = database.getCollection("ids");
+            collection11 = database2.getCollection("jpfdata");
+            collection22 = database2.getCollection("varfieldrelations");
+            collection33 = database2.getCollection("varfieldgroups");
+        root = new Node2();
+        current2 = new Node2();
         current = new Node();
-        current.parent = root;
-        root.children.add(current);
+        current2.parent = root;
+        root.children.add(current2);
         allowedPaths = new HashMap<>();
 
+        if (VM.getVM().getConfig().get("notichanges") != null) {
+            notichanges = true;
+        }
         if (VM.getVM().getConfig().get("fieldNames") != null) {
             String[] fields = VM.getVM().getConfig().get("fieldNames").toString().split(",");
             if (fields != null) {
                 fieldNames = new HashSet<String>(Arrays.asList(fields));
             }
+        }
+        if (VM.getVM().getConfig().get("vm.functions") != null) {
+            String[] functions = VM.getVM().getConfig().get("vm.functions").toString().split(";");
+            if (functions != null) {
+                for(String f:functions) {
+                    String fname = f.substring(0, f.indexOf("("));
+                    String fparams =f.substring(f.indexOf("(")+1, f.indexOf(")"));
+                    ArrayList<String> pa = new ArrayList<>();
+                    if(fparams!=null) {
+                        String[] params = fparams.split(",");
+                        for(String s:params) {
+                            pa.add(s);
+                        }
+                    }
+                    this.functions.put(fname, pa);
+                }
+            }
+            this.functionNames = this.functions.keySet();
         }
 
         if (allowThreads == null && VM.getVM().getConfig().get("vm.allowed.threads") != null) {
@@ -126,6 +184,7 @@ public class MyListener extends PropertyListenerAdapter {
                         }
                         for (int j = Integer.parseInt(depthSeq[0]); j <= Integer.parseInt(depthSeq[depthSeq.length - 1]); j++) {
                             allowedPaths.put(j, allowedChildrenArray);
+                            //        System.out.println("j " + j);
                         }
                     }
                 } else {
@@ -137,39 +196,178 @@ public class MyListener extends PropertyListenerAdapter {
     }
 
     @Override
+    public void methodEntered (VM vm, ThreadInfo currentThread, MethodInfo enteredMethod) {
+    }
+
+    @Override
+    public void instructionExecuted(VM vm, ThreadInfo ti, Instruction nextInsn, Instruction insn) {
+      boolean continuerun = true;
+    /*   Search search = vm.getSearch();
+
+       id = search.getStateId();
+        depth = search.getDepth();
+System.out.println("varcheck ... ");
+        boolean found = current2.findNode(id, depth);
+
+        if (allowDepth != null && allowChild != null && allowedPaths.size() != 0) {
+                        if (allowedPaths.containsKey(depth)) {
+                            if (!allowedPaths.get(depth).contains(current2.children.size())) {
+                                ti.breakTransition(true);
+                                continuerun  = false;
+                            }
+
+                        }
+                    }*/
+
+                    if (!ti.hasChanged() && notichanges ) {
+                        continuerun  = false;
+                    }
+                    if (allowThreads != null && !allowThreads.contains(ti.getName())) {
+                        continuerun  = false;
+                    }
+
+            Node newN = current;
+
+            if(continuerun && insn instanceof LocalVariableInstruction) {
+                LocalVariableInstruction lvinsn = (LocalVariableInstruction) insn;
+
+                    LocalVarInfo vi = lvinsn.getLocalVarInfo();
+                //    if(vi!=null)
+                //    System.out.println("var : " + vi.getName());
+                    String name = null;
+                    if(vi!=null){
+                     name = vi.getName();
+                            if (name.contains(".")) {
+                                name = name.substring(name.lastIndexOf(".") + 1);
+                            }}
+                //    if(paramFields!=null) {
+                 //       System.out.println(name + " " + paramFields.keySet() + " " + paramFields.keySet().contains(name));
+                //    }
+                    if(vi!=null)
+
+                    if(paramFields.keySet().contains(name))    {
+                        VariableData newD = new VariableData();
+System.out.println("var2 : " + vi.getName());
+                        if(lvinsn.getSourceLine()!=null) {
+                        newD.sourceLine = lvinsn.getSourceLine();
+                        newD.fileLocation = lvinsn.getFileLocation();
+                        newD.lineNumber = lvinsn.getLineNumber();
+                        newD.methodName = lvinsn.getMethodInfo().getName();
+                        newD.isSynchronized = lvinsn.getMethodInfo().isSynchronized();
+                        newD.threadName = ti.getName();
+
+                        newD.threadId = ti.getId();
+                        newD.instance = insn.getMethodInfo().getClassInfo().getUniqueId();
+
+
+
+                        newD.threadName = ti.getName();
+                        newD.threadId = ti.getId();
+                        newD.instance = lvinsn.getMethodInfo().getClassInfo().getUniqueId();
+                        newD.className = lvinsn.getMethodInfo().getClassInfo().getSimpleName();
+                        newD.packageName = lvinsn.getMethodInfo().getClassInfo().getPackageName();
+                        if(vi!=null)
+                        newD.variableName = vi.getName();
+                        System.out.println(vi.getName());
+                        newD.value = lvinsn.getVariableId();
+
+                        if(vi!=null)
+                        newD.type = vi.getType();
+
+
+                        if(newD.sourceLine!=null) {
+                            if(newD.sourceLine.contains("=")) {
+                                String part1 = newD.sourceLine.split("=")[0].trim();
+                                if(newD.sourceLine.split("=").length>=2) {
+                                    String part2 = newD.sourceLine.split("=")[1].trim();
+                                    if (part2.contains(newD.variableName)) {
+                                        newD.readOperation = true;
+                                    }
+                                    if(part1.contains(newD.variableName) && (part1.lastIndexOf(newD.variableName)+newD.variableName.length()==part1.length())) {
+                                        newD.writeOperation = true;
+
+                                        if(newD.writeOperation) {
+                                            if(paramFields.containsKey(newD.className+newD.lineNumber)){
+                                               paramFields.put(name, paramFields.get(newD.className+newD.lineNumber));
+                                               paramFields.remove(newD.className+newD.lineNumber);
+                                            }
+                                        }
+                                    }
+
+
+                                    if(newD.readOperation && !newD.writeOperation) {
+                                        if (part1.split(" ").length >= 2) {
+                                            String fn = null;
+                                            String var = part1.split(" ")[1].trim();
+                                            if(!paramFields.containsKey(newD.className+newD.lineNumber) && paramFields.get(name)!=null){
+                                               paramFields.put(newD.className+newD.lineNumber, paramFields.get(name));
+                                            }
+                                        }
+
+                                    }
+                                }
+                            }else if(newD.sourceLine.contains("++") || newD.sourceLine.contains("--")) {
+                                newD.writeOperation = true;
+                            }else
+                                newD.readOperation = true;
+                        }
+
+                        if (newD.variableName != null) {
+                            if (newN.varData.get(newD.threadName)==null) {
+                                newN.varData.put(newD.threadName, new HashMap<>());
+                                newN.varData.get(newD.threadName).put(newD.variableName, new ArrayList<>());
+                            }else if (newN.varData.get(newD.threadName).get(newD.variableName)==null) {
+                                newN.varData.get(newD.threadName).put(newD.variableName, new ArrayList<>());
+                            }
+                            newN.varData.get(newD.threadName).get(newD.variableName).add(newD);
+                            addData(newN);
+
+                        }
+
+                        }
+                    }
+                }
+
+
+    }
+
+    @Override
     public synchronized void choiceGeneratorSet(VM vm, ChoiceGenerator<?> cg) {
         Search search = vm.getSearch();
 
         id = search.getStateId();
         depth = search.getDepth();
 
-        boolean found = current.findNode(id, depth);
-
+        boolean found = current2.findNode(id, depth);
+        System.out.println("id found : " + id + " " + found);
         if (!found) {
 
-            Node newN = new Node();
-            newN.parent = current;
+            System.out.println("id not found : " + id + " " + found);
 
+            Node newN = new Node();
+            Node2 newN2 = new Node2();
+            newN2.parent = current2;
+            newN2.depth = depth;
+            newN2.id = id;
+            newN2.objectCount = current2.objectCount+1;
             newN.depth = depth;
             newN.id = id;
-            newN.threadAccessed = (ArrayList<String>) current.threadAccessed.clone();
+
+
+            if(current!=null) {
+                newN.objectCount = current2.objectCount;
+                newN.objectPerThreadCount = DeepClone.deepClone(current.objectPerThreadCount);
+            }
 
             if (cg instanceof ThreadChoiceFromSet) {
 
                 ThreadInfo[] threads = ((ThreadChoiceFromSet) cg).getAllThreadChoices();
                 for (int i = 0; i < threads.length; i++) {
                     ThreadInfo ti = threads[i];
-                    if (!ti.hasChanged() && (threadsDepMap == null || threadsDepMap.get(search.getVM().getCurrentThread().getName()) == null)) {
-                        continue;
-                    }
-                    if (allowThreads != null && !allowThreads.contains(ti.getName()) && (threadsDepMap == null || threadsDepMap.get(search.getVM().getCurrentThread().getName()) == null)) {
-                        continue;
-                    }
 
                     if (allowDepth != null && allowChild != null && allowedPaths.size() != 0) {
                         if (allowedPaths.containsKey(depth)) {
-
-                            if (!allowedPaths.get(depth).contains(current.children.size())) {
+                            if (!allowedPaths.get(depth).contains(current2.children.size())) {
                                 ti.breakTransition(true);
 
                                 continue;
@@ -178,84 +376,43 @@ public class MyListener extends PropertyListenerAdapter {
                         }
                     }
 
+                //    if (!ti.hasChanged() && notichanges && (threadsDepMap == null || threadsDepMap.get(search.getVM().getCurrentThread().getName()) == null)) {
+                //        continue;
+                 //   }
+                    if (allowThreads != null && !allowThreads.contains(ti.getName()) && (threadsDepMap == null || threadsDepMap.get(search.getVM().getCurrentThread().getName()) == null)) {
+                        continue;
+                    }
+
+
+
                     Instruction insn = ti.getPC();
 
-                    if (insn instanceof MONITORENTER) {
+
+                if (insn instanceof FieldInstruction) { // Ok, its a get/putfield
+                    FieldInstruction finsn = (FieldInstruction) insn;
+                       String fname = null;
                         Data newD = new Data();
-                        newD.locks = newN.getParentLockInfo(ti.getName(), current);
-                        newD.lockRemovals = parentLockRemovals;
 
-                        newD.fileLocation = insn.getFileLocation();
-                        newD.lineNumber = insn.getLineNumber();
-                        newD.methodName = insn.getMethodInfo().getName();
-                        newD.className = insn.getMethodInfo().getClassName();
-                        newD.packageName = insn.getMethodInfo().getClassInfo().getPackageName();
-                        newD.isSynchronized = insn.getMethodInfo().isSynchronized();
-                        newD.threadName = ti.getName();
-                        if (!newN.threadAccessed.contains(ti.getName())) {
-                            newN.threadAccessed.add(ti.getName());
-                        }
-                        newD.threadId = ti.getId();
-                        newD.instance = insn.getMethodInfo().getClassInfo().getUniqueId();
-
-                        MONITORENTER mentsinsn = (MONITORENTER) insn;
-                        newD.isMonitorEnter = true;
-                        newD.lockRef = mentsinsn.getLastLockRef();
-                        newD.sourceLine = mentsinsn.getSourceLine();
-
-                        newN.addThreadLock(newD, newD.threadName, newD.lockRef);
-                        if (fieldNames != null) {
-                            newN.data.add(newD);
-                        }
-                    }
-
-                    if (insn instanceof MONITOREXIT) {
-                        Data newD = new Data();
-                        newD.locks = newN.getParentLockInfo(ti.getName(), current);
-                        newD.lockRemovals = parentLockRemovals;
-
-                        newD.fileLocation = insn.getFileLocation();
-                        newD.lineNumber = insn.getLineNumber();
-                        newD.methodName = insn.getMethodInfo().getName();
-                        newD.className = insn.getMethodInfo().getClassName();
-                        newD.packageName = insn.getMethodInfo().getClassInfo().getPackageName();
-                        newD.isSynchronized = insn.getMethodInfo().isSynchronized();
-                        newD.threadName = ti.getName();
-                        if (!newN.threadAccessed.contains(ti.getName())) {
-                            newN.threadAccessed.add(ti.getName());
-                        }
-                        newD.threadId = ti.getId();
-                        newD.instance = insn.getMethodInfo().getClassInfo().getUniqueId();
-
-                        MONITOREXIT mexinsn = (MONITOREXIT) insn;
-                        newD.isMonitorExit = true;
-                        newD.lockRef = mexinsn.getLastLockRef();
-                        newD.sourceLine = mexinsn.getSourceLine();
-
-                        newN.removeThreadLock(newD, newD.threadName, newD.lockRef);
-                        if (fieldNames != null) {
-                            newN.data.add(newD);
-                        }
-                    }
-
-                    if (insn instanceof FieldInstruction) {
-
-                        Data newD = new Data();
-                        newD.locks = newN.getParentLockInfo(ti.getName(), current);
-                        newD.lockRemovals = parentLockRemovals;
 
                         newD.fileLocation = insn.getFileLocation();
                         newD.lineNumber = insn.getLineNumber();
                         newD.methodName = insn.getMethodInfo().getName();
                         newD.isSynchronized = insn.getMethodInfo().isSynchronized();
                         newD.threadName = ti.getName();
-                        if (!newN.threadAccessed.contains(ti.getName())) {
-                            newN.threadAccessed.add(ti.getName());
-                        }
+
                         newD.threadId = ti.getId();
                         newD.instance = insn.getMethodInfo().getClassInfo().getUniqueId();
 
-                        FieldInstruction finsn = (FieldInstruction) insn;
+                        if(current2!=null) {
+                            newN.objectCount = current2.objectCount + 1;
+                        }
+                        if(newN.objectPerThreadCount.get(newD.threadName)==null){
+                            newN.objectPerThreadCount.put(newD.threadName, 1);
+                        }else {
+                            newN.objectPerThreadCount.put(newD.threadName, newN.objectPerThreadCount.get(newD.threadName)+1);
+                        }
+
+
 
                         if (finsn.isRead()) {
                             newD.readOperation = true;
@@ -264,6 +421,8 @@ public class MyListener extends PropertyListenerAdapter {
                         }
                         FieldInfo fi = finsn.getFieldInfo();
 
+                        newD.fieldName = fi.getFullName();
+                        System.out.println("===="+fi.getFullName());
                         newD.threadName = ti.getName();
                         newD.threadId = ti.getId();
                         newD.instance = insn.getMethodInfo().getClassInfo().getUniqueId();
@@ -274,6 +433,9 @@ public class MyListener extends PropertyListenerAdapter {
                             if (name.contains(".")) {
                                 name = name.substring(name.lastIndexOf(".") + 1);
                             }
+                            fname=name;
+                            fieldNames.add(name);
+
                             if (fieldNames.contains(name)) {
                                 newD.fieldName = fi.getFullName();
                             } else {
@@ -286,98 +448,96 @@ public class MyListener extends PropertyListenerAdapter {
                         newD.type = finsn.getFieldInfo().getType();
                         newD.sourceLine = finsn.getSourceLine();
 
-                        if (newD.fieldName != null && newD.fieldName.compareTo("gr.uop.gr.javamethodsjpf.ReentrantLock.num") == 0 && newD.writeOperation) {
-                            if (newD.methodName.compareTo("lock") == 0) {
-                                newN.addThreadLock(newD, newD.threadName, newD.instance);
-                            } else if (newD.methodName.compareTo("unlock") == 0) {
-                                if (newN.removeThreadLock(newD, newD.threadName, newD.instance)) {
-                                    if (newD.lockRemovals.get(newD.instance) != null) {
-                                        newD.lockRemovals.put(newD.instance, (int) newD.lockRemovals.get(newD.instance) + 1);
+                        if(newD.readOperation) {
+
+                            if(newD.sourceLine!=null) {
+
+                                String part1 = newD.sourceLine.split("=")[0].trim();
+                                if (newD.sourceLine.split("=").length >= 2) {
+                                    String var = null;
+                                    RelationOfFieldsAndVars rel = new RelationOfFieldsAndVars();
+                                    if (part1.split(" ").length >= 2) {
+                                        var = part1.split(" ")[1].trim();
+                                        rel.variableName=var;
+                                        rel.type=part1.split(" ")[0].trim();
+
                                     } else {
-                                        newD.lockRemovals.put(newD.instance, 1);
+                                        var = part1.trim();
+                                        rel.variableName=var;
+
                                     }
+                                    String v  = rel.variableName;
+
+                                    if(!paramFields.keySet().contains(v))
+                                        paramFields.put(v, fname);
                                 }
 
                             }
+                        }else if(newD.writeOperation){
+                            if(newD.sourceLine!=null) {
+
+                                String part2 = newD.sourceLine.split("=")[1].trim();
+                                if (newD.sourceLine.split("=").length >= 2) {
+                                    String var = null;
+                                    if (part2.split(" ").length >= 2) {
+
+                                        for(String s:part2.split(" "))  {
+                                            s=s.replaceAll(";", "");
+                                            String v  = s;
+                                    System.out.println("paramFields.keySet() v " + paramFields.keySet() + " " + v + " "  +  paramFields.get(v));
+                                           if(paramFields.keySet().contains(v))
+                                                newD.relatedField=paramFields.get(v);
+
+                                        }
+
+                                    } else {
+                                        var = part2.trim();
+                                        var=var.replaceAll(";", "");
+                                        String v  = var;
+                                    System.out.println("paramFields.keySet() v " + paramFields.keySet() + " " + v + " "  +  paramFields.get(v));
+                                           if(paramFields.keySet().contains(v))
+                                                newD.relatedField=paramFields.get(v);
+
+                                    }
+
+                                }
+                            }
                         }
+
+                        if(paramFields.keySet()!=null)
+                        System.out.println("paramFields.keySet() : " + paramFields.keySet().toString());
 
                         if (newD.fieldName != null) {
                             newN.data.add(newD);
+
                         }
-                    }
+
+                   newN.previousid=newN2.parent.id;
+                   addData(newN);
+                }
+
+
 
                 }
-                if (newN.data != null && newN.data.size() != 0) {
-                    current.children.add(newN);
-                    current = newN;
-                    statesIncluded.add(cg.getStateId());
-                    String nodeMap = newN.data.get(0).threadName + " " + newN.data.get(0).fieldName;
-                    stateGroupMap2.put(cg.getStateId(), nodeMap);
-                    if (!stateGroupMap.containsKey(nodeMap)) {
-                        stateGroupMap.put(nodeMap, cg.getStateId());
-                        stateGroups.put(cg.getStateId(), cg.getStateId());
-                    } else {
-                        if (!stateGroups.containsKey(cg.getStateId())) {
-                            int keyNode = stateGroupMap.get(nodeMap);
-                            stateGroups.put(cg.getStateId(), keyNode);
-                        }
-                    }
-                    nodesIncluded.put(cg.getStateId(), newN);
-                } else {
-                    current.children.add(newN);
-                    current = newN;
-                    statesExcluded.add(cg.getStateId());
-                }
+
+
+                current2.children.add(newN2);
+                current2 = newN2;
+                newN.parentid = current2.parent.id;
+                current = newN;
+
             }
 
-            previousId = id;
+
         }
     }
 
+    //--- the ones we are interested in
     @Override
     public synchronized void searchStarted(Search search) {
         System.out.println("----------------------------------- search started");
     }
 
-    @Override
-    public synchronized void stateAdvanced(Search search) {
-
-        synchronized (this) {
-            statesHistory.add(search.getVM().getStateId());
-            statesAction.add("advanced " + search.getVM().isEndState());
-        }
-
-        if (allowThreads != null) {
-            if (!allowThreads.contains(search.getVM().getCurrentThread().getName()) && (threadsDepMap == null || threadsDepMap.get(search.getVM().getCurrentThread().getName()) == null)) {
-
-                search.getVM().ignoreState();
-            } else if (!allowThreads.contains(search.getVM().getCurrentThread().getName())) {
-                if (threadsDepMap != null && threadsDepMap.get(search.getVM().getCurrentThread().getName()) != null) {
-                    current.findNode(search.getStateId(), search.getDepth());
-                    boolean canBeTerminated = true;
-                    for (String t : threadsDepMap.get(search.getVM().getCurrentThread().getName())) {
-                        if (!current.threadAccessed.contains(t)) {
-                            canBeTerminated = false;
-                            break;
-                        }
-                    }
-                    if (canBeTerminated) {
-                        search.getVM().ignoreState();
-
-                    }
-                }
-            }
-        }
-    }
-
-    @Override
-    public synchronized void stateBacktracked(Search search) {
-        synchronized (this) {
-            statesHistory.add(search.getVM().getStateId());
-            statesAction.add("backtracked " + search.getVM().isEndState());
-        }
-
-    }
 
     int rootId = -100;
 
@@ -385,53 +545,239 @@ public class MyListener extends PropertyListenerAdapter {
     public synchronized void searchFinished(Search search) {
         System.out.println("----------------------------------- search finished");
 
-        try {
-        //    printTree(root);
-            Thread.sleep(10000);
-
-            checkFieldRule(root, new HashMap<String, HashMap<String, FieldState>>());
-
-            System.out.println(errors.toString());
-        } catch (Exception ex) {
-            Logger.getLogger(MyListener.class.getName()).log(Level.SEVERE, null, ex);
-        }
 
     }
 
-    public void printTree(Node myNode) {
 
+    public DBObject toDBObject(Node myNode, Data d) {
+
+            try {
+                collection.remove(new BasicDBObject("id", myNode.id));
+            } catch (Exception me) {
+                System.err.println("Data: Unable to delete due to an error: " + me);
+            }
+
+        BasicDBObject bo = new BasicDBObject();
+
+        bo.append("objectCount",myNode.objectCount);
+
+        bo.append("objectPerThreadCountKeys", Arrays.toString(myNode.objectPerThreadCount.keySet().toArray()));
+        for(String k : myNode.objectPerThreadCount.keySet())
+            bo.append(k, myNode.objectPerThreadCount.get(k));
+
+        bo.append("id", myNode.id)
+                     .append("previousId", myNode.previousid)
+                     .append("depth", myNode.depth)
+                     .append("data", new BasicDBObject("fieldName", d.fieldName)
+                                                  .append("lineNumber", d.lineNumber)
+                                                  .append("methodName", d.methodName)
+                                                  .append("className", d.className)
+                                                  .append("packageName", d.packageName)
+                                                  .append("readOperation", d.readOperation)
+                                                  .append("writeOperation", d.writeOperation)
+                                                  .append("sourceLine", d.sourceLine)
+                                                  .append("threadId", d.threadId)
+                                                  .append("threadName", d.threadName)
+                                                  .append("relatedField", d.relatedField)
+                                                  .append("value", d.value));
+
+
+        if(myNode.fieldVarGroups.get(d.fieldName)!=null) {
+            bo.append("fieldVarGroups", Arrays.toString(myNode.fieldVarGroups.get(d.fieldName).toArray()));
+        }
+
+        if(d.fieldName!=null && myNode.relationOfFieldsAndVarsMap!=null && myNode.relationOfFieldsAndVarsMap.get(d.fieldName)!=null) {
+                                    int i=0;
+                                    for(RelationOfFieldsAndVars rofv:myNode.relationOfFieldsAndVarsMap.get(d.fieldName)) {
+                                        bo.append("relationOfFieldsAndVarsMap" + i, new BasicDBObject("fieldName", rofv.fieldName)
+                                                  .append("lineNumber", rofv.lineNumber)
+                                                  .append("methodName", rofv.methodName)
+                                                  .append("className", rofv.className)
+                                                  .append("packageName", rofv.packageName)
+                                                  .append("sourceLine", rofv.sourceLine)
+                                                  .append("threadName", rofv.threadName));
+                                        i++;
+                                    }
+
+                            }
+
+            HashMap<String,ArrayList<VariableData>> vdt = myNode.varData.get(d.threadName);
+
+            if(vdt!=null) {
+                for(String vdv : vdt.keySet()) {
+                    if(vdt.get(vdv)!=null) {
+                        for(VariableData vd:vdt.get(vdv)) {
+                            if(vd!=null) {
+                                bo.append("variableData"+vd.hashCode(), new BasicDBObject("variableName", vd.variableName)
+                                                  .append("lineNumber", vd.lineNumber)
+                                                  .append("methodName", vd.methodName)
+                                                  .append("className", vd.className)
+                                                  .append("packageName", vd.packageName)
+                                                  .append("readOperation", vd.readOperation)
+                                                  .append("writeOperation", vd.writeOperation)
+                                                  .append("sourceLine", vd.sourceLine)
+                                                  .append("threadId", vd.threadId)
+                                                  .append("threadName", vd.threadName)
+                                                  .append("value", vd.value));
+                            }
+
+
+                        }
+                    }
+                }
+            }
+
+
+
+        return bo;
+    }
+
+    public void addData(Node myNode)  {
+        try {
         List<Data> ld = myNode.data;
+
+
 
         System.out.println();
         System.out.print("id : " + myNode.id);
+
         System.out.print(" depth : " + myNode.depth);
 
+
         for (Data d : ld) {
+            if(d.fieldName!=null) {
 
             System.out.print(" fieldName : " + d.fieldName);
-            System.out.print(" lineNumber : " + d.lineNumber);
-            System.out.print(" methodName : " + d.methodName);
-            System.out.print(" className : " + d.className);
-            System.out.print(" instance : " + d.instance);
-            System.out.print(" writeOperation : " + d.writeOperation);
-            System.out.print(" readOperation : " + d.readOperation);
-            System.out.print(" threadName : " + d.threadName);
-            System.out.print(" isSynchronized : " + d.isSynchronized);
-            System.out.print(" packageName : " + d.packageName);
-            System.out.print(" fileLocation : " + d.fileLocation);
-            System.out.print(" isMonitorEnter : " + d.isMonitorEnter);
-            System.out.print(" isMonitorExit : " + d.isMonitorExit);
-            System.out.print(" lockRef : " + d.lockRef);
-            System.out.print(" value : " + d.value);
-            System.out.print(" type : " + d.type);
-            System.out.print(" sourceLine : " + d.sourceLine);
-            System.out.print(" locks : " + (d.locks != null ? d.locks.toString() : null));
-            System.out.print(" lockRemovals : " + (d.lockRemovals != null ? Arrays.asList(d.lockRemovals) : null));
 
+            System.out.print(" lineNumber : " + d.lineNumber);
+
+            System.out.print(" methodName : " + d.methodName);
+
+            System.out.print(" className : " + d.className);
+
+            System.out.print(" instance : " + d.instance);
+
+            System.out.print(" writeOperation : " + d.writeOperation);
+
+            System.out.print(" readOperation : " + d.readOperation);
+
+            System.out.print(" threadName : " + d.threadName);
+
+            System.out.print(" isSynchronized : " + d.isSynchronized);
+
+            System.out.print(" packageName : " + d.packageName);
+
+            System.out.print(" fileLocation : " + d.fileLocation);
+
+            System.out.print(" isMonitorEnter : " + d.isMonitorEnter);
+
+            System.out.print(" isMonitorExit : " + d.isMonitorExit);
+
+            System.out.print(" lockRef : " + d.lockRef);
+
+            System.out.print(" value : " + d.value);
+
+            System.out.print(" type : " + d.type);
+
+            System.out.print(" sourceLine : " + d.sourceLine);
+            System.out.print(" relatedField : " + d.relatedField);
+
+            if(myNode.fieldVarGroups.get(d.fieldName)!=null) {
+                System.out.print(" fieldVarGroups : " + Arrays.toString(myNode.fieldVarGroups.get(d.fieldName).toArray()));
+
+            }
+
+            HashMap<String,ArrayList<VariableData>> vdt = myNode.varData.get(d.threadName);
+            HashSet<String> rvars = new HashSet();
+            if(vdt!=null) {
+                for(String vdv : vdt.keySet()) {
+                    for(VariableData vd:vdt.get(vdv)) {
+                        if(d.lineNumber==vd.lineNumber) {
+                            rvars.add(vd.variableName);
+                        }
+                    }
+                }
+            }
+            for(String vd : myNode.relationOfFieldsAndVarsMap.keySet())
+            if(rvars.contains(vd) && myNode.relationOfFieldsAndVarsMap.get(vd)!=null) {
+                                    ArrayList<RelationOfFieldsAndVars> rvs = null;
+                                    if(myNode.relationOfFieldsAndVarsMap.get(d.fieldName)==null)
+                                        rvs = new ArrayList<>();
+                                    else
+                                        rvs = myNode.relationOfFieldsAndVarsMap.get(d.fieldName);
+
+                                    for(RelationOfFieldsAndVars rofv:myNode.relationOfFieldsAndVarsMap.get(vd)) {
+                                       rvs.add(rofv);
+
+
+                                    }
+                                    myNode.relationOfFieldsAndVarsMap.put(d.fieldName, rvs);
+                                }
+
+            vdt = myNode.varData.get(d.threadName);
+
+            if(vdt!=null) {
+                for(String vdv : vdt.keySet()) {
+                    if(vdt.get(vdv)!=null) {
+                        for(VariableData vd:vdt.get(vdv)) {
+                            if(vd!=null) {
+                                System.out.println(" Variable data : ");
+
+                                System.out.print(" variableName : " + vd.variableName);
+
+                                System.out.print(" lineNumber : " + vd.lineNumber);
+
+                                System.out.print(" methodName : " + vd.methodName);
+
+                                System.out.print(" className : " + vd.className);
+
+                                System.out.print(" writeOperation : " + vd.writeOperation);
+
+                                System.out.print(" readOperation : " + vd.readOperation);
+
+                                System.out.print(" isSynchronized : " + vd.isSynchronized);
+
+                                System.out.print(" fileLocation : " + vd.fileLocation);
+
+                                System.out.print(" packageName : " + vd.packageName);
+
+                                System.out.print(" sourceLine : " + vd.sourceLine);
+
+                                System.out.print(" threadName : " + vd.threadName);
+
+                                if(myNode.relationOfFieldsAndVarsMap.get(vd.variableName)!=null) {
+                                    for(RelationOfFieldsAndVars rofv:myNode.relationOfFieldsAndVarsMap.get(vd.variableName)) {
+                                        System.out.print(" relationOfFieldsAndVarsMap : " + rofv.fieldName + " " + rofv.variableName + " " + rofv.threadName + " " + rofv.sourceLine + " " + rofv.lineNumber);
+
+                                    }
+                                }
+
+
+                                System.out.print(" type : " + vd.type);
+
+                                System.out.print(" value : " + vd.value);
+
+                            }
+                        }
+                    }
+                }
+            }
+
+
+      try {
+            DBObject prevDBObject = toDBObject(myNode,d);
+            collection.insert(prevDBObject);
+            prevDBObject = null;
+      }catch(Exception e){
+          e.printStackTrace();
+      }
+            }
         }
 
-        for (Node nd : myNode.children) {
-            printTree(nd);
+
+        }catch(Exception e){
+            e.printStackTrace();
+
         }
     }
 
@@ -460,6 +806,89 @@ public class MyListener extends PropertyListenerAdapter {
 
     }
 
+    public void printVarData(VariableData d) {
+
+        System.out.println();
+        System.out.print(" varName : " + d.variableName);
+        System.out.print(" lineNumber : " + d.lineNumber);
+        System.out.print(" methodName : " + d.methodName);
+        System.out.print(" className : " + d.className);
+        System.out.print(" instance : " + d.instance);
+        System.out.print(" writeOperation : " + d.writeOperation);
+        System.out.print(" readOperation : " + d.readOperation);
+        System.out.print(" threadName : " + d.threadName);
+        System.out.print(" isSynchronized : " + d.isSynchronized);
+        System.out.print(" packageName : " + d.packageName);
+        System.out.print(" fileLocation : " + d.fileLocation);
+        System.out.print(" value : " + d.value);
+        System.out.print(" type : " + d.type);
+        System.out.print(" sourceLine : " + d.sourceLine);
+
+    }
+
+    public void checkRule(Node myNode, Rule checkRule, HashMap<String, Rule> states) {
+
+        List<Data> ld = myNode.data;
+        Rule state;
+
+        for (Data d : ld) {
+            if (states.containsKey(d.threadName)) {
+                state = states.get(d.threadName);
+            } else {
+                states.put(d.threadName, new Rule());
+                state = states.get(d.threadName);
+                state.accessSeq = (ArrayList<String>) checkRule.accessSeq.clone();
+            }
+
+            if (d.fieldName != null && d.fieldName.compareTo(checkRule.field) == 0 && state.isIfIncluded == false && d.sourceLine.contains("if")) {
+                state.field = d.fieldName;
+                state.isIfIncluded = true;
+            }
+
+            if (state.isIfIncluded) {
+                if (d.fieldName != null && d.fieldName.compareTo(checkRule.field) == 0) {
+                    if (state.accessSeq.isEmpty() == false && state.accessSeq.get(0).compareTo("r") == 0 && d.readOperation == true) {
+                        state.accessSeq.remove(0);
+                    } else if (state.accessSeq.isEmpty() == false && state.accessSeq.get(0).compareTo("w") == 0 && d.writeOperation == true) {
+                        state.accessSeq.remove(0);
+                    } else if (state.accessSeq.isEmpty() == false && state.accessSeq.get(0).compareTo("r") == 0 && d.writeOperation == true) {
+                        state = new Rule();
+                        state.accessSeq = (ArrayList<String>) checkRule.accessSeq.clone();
+                        continue;
+                    }
+                }
+
+                if (d.fieldName != null && d.fieldName.compareTo(checkRule.lock) == 0) {
+                    if (state.accessSeq.isEmpty() == false && state.accessSeq.get(0).compareTo("u") == 0 && d.sourceLine.contains("unlock")) {
+                        state.accessSeq.remove(0);
+                    } else if (state.accessSeq.isEmpty() == false && state.accessSeq.get(0).compareTo("l") == 0 && d.sourceLine.contains("lock")) {
+                        state.accessSeq.remove(0);
+                    }
+                }
+            }
+
+            if (state.accessSeq.isEmpty() && state.isIfIncluded == checkRule.isIfIncluded && state.field.compareTo(checkRule.field) == 0) {
+                System.out.println("Error pattern detected... " + d.lineNumber + " " + d.className);
+                System.exit(-1);
+            }
+        }
+
+
+    }
+
+    class Rule {
+
+        String threadName = null;
+        String field = null;
+        String lock = null;
+        boolean isIfIncluded = false;
+        ArrayList<String> accessSeq = new ArrayList<>();
+
+        public void check() {
+
+        }
+    }
+
     class StateNode {
 
         int stateId = -1;
@@ -486,43 +915,97 @@ public class MyListener extends PropertyListenerAdapter {
         return clone;
     }
 
-    class Node {
-
-        protected List<Data> data = new ArrayList<Data>();
-        protected ArrayList<String> threadAccessed = new ArrayList<>();
-        protected Node parent = null;
-        protected List<Node> children = new ArrayList<Node>();
+    class Node2 {
         protected int id = 0;
         protected int depth = 0;
-        protected boolean locksSearched = false;
+        protected int previousid = -100;
+        protected int objectCount = 0;
+        protected Node2 parent = null;
+        protected List<Node2> children = new ArrayList<Node2>();
 
-        public ArrayList<Long> getParentLockInfo(String thread, Node parent) {
-            ArrayList<Long> parentLocks = null;
+        public boolean findNode(int id, int depth) {
+            boolean found = false;
 
-            if (parent != null) {
-                Node nd = parent;
+            while (current2.id > id && current2.depth != 0) {
+                current2 = current2.parent;
+            }
 
-                for (Data d : nd.data) {
-                    if (d.threadName.compareTo(thread) == 0 && d.locks != null) {
-                        parentLocks = (ArrayList<Long>) d.locks.clone();
-                        parentLockRemovals = new HashMap<>();
-                        if (d.lockRemovals != null) {
-                            parentLockRemovals.putAll(d.lockRemovals);
-                        }
-
+            if (current2.id != id) {
+                for (Node2 nd : current2.children) {
+                    if (nd.id == id) {
+                        current2 = nd;
+                        found = true;
                         break;
                     }
                 }
+            } else {
+                found = true;
+            }
 
-                if (parentLocks == null && nd.parent != null && !locksSearched) {
-                    locksSearched = true;
-                    parentLocks = getParentLockInfo(thread, nd.parent);
-                    locksSearched = false;
+            return found;
+        }
+
+        public Node2 findNode(int id, int depth, Node2 parentNode) {
+            Node2 found = parentNode;
+
+            if (found.id != id) {
+                for (Node2 nd : found.children) {
+                    if (nd.id == id) {
+                        found = nd;
+                        break;
+                    } else {
+                        if (nd.depth > depth) {
+                            break;
+                        }
+                        found = findNode(id, depth, nd);
+                    }
                 }
             }
 
-            return parentLocks;
+            return found;
         }
+    }
+
+    class Node {
+
+        protected List<Data> data = new ArrayList<Data>();
+        protected int parentid = 0;
+        protected int id = 0;
+        protected int previousid = -100;
+        protected int depth = 0;
+        protected boolean locksSearched = false;
+        protected DBObject prevDBObject = null;
+        protected int objectCount = 0;
+        protected HashMap<String,Integer> objectPerThreadCount = new HashMap<>();
+
+        HashMap<String, HashMap<String,ArrayList<VariableData>>> varData = new HashMap<>();
+        ConcurrentHashMap<String,ArrayList<RelationOfFieldsAndVars>> relationOfFieldsAndVarsMap = new ConcurrentHashMap<>();
+        HashMap<String,HashSet<String>> fieldVarGroups = new HashMap<>();
+
+
+
+        public HashMap<String, HashSet<String>> getFieldVarGroups() {
+            FieldVarGroups fvgs = new FieldVarGroups();
+            fieldVarGroups = fvgs.getDBObject(parentid);
+
+            return fieldVarGroups;
+        }
+
+        public ConcurrentHashMap<String,ArrayList<RelationOfFieldsAndVars>> getRelationOfFieldsAndVarsMap() {
+            int count = 0;
+            RelationOfFieldsAndVars rfv = new RelationOfFieldsAndVars();
+            boolean r;
+            do {
+                r = rfv.getDBObject(parentid, count++);
+                if(r) {
+                    relationOfFieldsAndVarsMap.put(rfv.fieldName,new ArrayList<>());
+                    relationOfFieldsAndVarsMap.get(rfv.fieldName).add(rfv.copy());
+                }
+            } while(r);
+
+            return relationOfFieldsAndVarsMap;
+        }
+
 
         public void addThreadLock(Data d, String thread, long lockInstance) {
             ArrayList<Long> locks = d.locks;
@@ -549,47 +1032,7 @@ public class MyListener extends PropertyListenerAdapter {
 
         }
 
-        public boolean findNode(int id, int depth) {
-            boolean found = false;
 
-            while (current.depth >= depth && current.depth != 0) {
-                current = current.parent;
-            }
-
-            if (current.id != id) {
-                for (Node nd : current.children) {
-                    if (nd.id == id) {
-                        current = nd;
-                        found = true;
-                        break;
-                    }
-                }
-            } else {
-                found = true;
-            }
-
-            return found;
-        }
-
-        public Node findNode(int id, int depth, Node parentNode) {
-            Node found = parentNode;
-
-            if (found.id != id) {
-                for (Node nd : found.children) {
-                    if (nd.id == id) {
-                        found = nd;
-                        break;
-                    } else {
-                        if (nd.depth > depth) {
-                            break;
-                        }
-                        found = findNode(id, depth, nd);
-                    }
-                }
-            }
-
-            return found;
-        }
     }
 
     class Data {
@@ -612,316 +1055,160 @@ public class MyListener extends PropertyListenerAdapter {
         boolean isMonitorExit = false;
         int lockRef = -1;
         String sourceLine = null;
+        String relatedField = null;
+        int relatedLinenum = -1;
         ArrayList<Long> locks = new ArrayList<>();
         HashMap<Long, Integer> lockRemovals = new HashMap<>();
     }
 
-    public void checkFieldRule(Node myNode, HashMap<String, HashMap<String, FieldState>> fieldStates) {
+    class VariableData {
 
-        ArrayList<String> checkFieldRule = new ArrayList<>();
-        checkFieldRule.add("readField");
-        checkFieldRule.add("threadChange");
-        checkFieldRule.add("writeField");
-        checkFieldRule.add("threadBack");
-        checkFieldRule.add("writeField");
-
-        List<Data> ld = myNode.data;
-        FieldState state = null;
-
-        for (Data d : ld) {
-
-            if (threadNames.containsKey(d.fieldName)) {
-                threadNames.get(d.fieldName).add(d.threadName);
-            } else {
-                HashSet<String> threadSet = new HashSet<>();
-                threadSet.add(d.threadName);
-                threadNames.put(d.fieldName, threadSet);
-            }
-
-            for (String threadN : threadNames.get(d.fieldName)) {
-                if (d.fieldName != null) {
-
-                    if (fieldStates.containsKey(d.fieldName)) {
-                        if (fieldStates.get(d.fieldName).containsKey(threadN)) {
-                            state = fieldStates.get(d.fieldName).get(threadN);
-                        } else {
-                            fieldStates.get(d.fieldName).put(threadN, new FieldState());
-                            state = fieldStates.get(d.fieldName).get(threadN);
-                            state.resetFieldRule(checkFieldRule);
-                        }
-
-                    } else {
-                        fieldStates.put(d.fieldName, new HashMap<String, FieldState>());
-                        fieldStates.get(d.fieldName).put(threadN, new FieldState());
-                        state = fieldStates.get(d.fieldName).get(threadN);
-                        state.resetFieldRule(checkFieldRule);
-
-                    }
-
-                    if (state.allThreadSeq.size() <= 1 || (state.allThreadSeq.size() == 2 && state.allThreadSeq.contains(d.threadName))) {
-                        if (d.threadName.compareTo(threadN) == 0 && d.readOperation && state.checkFieldRule.size() != 0 && state.checkFieldRule.get(0).compareTo("readField") == 0) {
-                            state.threadSeq.add(d.threadName);
-                            state.checkFieldRule.remove(0);
-                            state.lineNumberSeq.add(d.lineNumber);
-                            state.allThreadSeq.add(d.threadName);
-                            state.parentId = myNode.id;
-                            state.parentDepth = myNode.depth;
-                            if (VM.getVM().getConfig().get("vm.compilerop") != null && d.sourceLine != null) {
-                                d.sourceLine = d.sourceLine.trim();
-                                String fieldN = d.fieldName;
-                                if (fieldN.contains(".")) {
-                                    fieldN = fieldN.substring(fieldN.lastIndexOf(".") + 1);
-                                }
-                                if (d.sourceLine.contains("=")) {
-                                    String[] fields = d.sourceLine.split("=");
-                                    if (fields[0].contains(fieldN) && fields[1].contains(fieldN)) {
-                                        state.resetFieldRule(checkFieldRule);
-                                    }
-                                } else if (d.sourceLine.contains(fieldN + "++") || d.sourceLine.contains(fieldN + "--")) {
-                                    state.resetFieldRule(checkFieldRule);
-                                }
-
-                            }
-                        } else if (d.threadName.compareTo(threadN) != 0 && state.checkFieldRule.size() != 0 && state.checkFieldRule.get(0).compareTo("threadChange") == 0 && state.checkFieldRule.get(1).compareTo("writeField") == 0) {
-                            if (!state.threadSeq.contains(d.threadName) && d.writeOperation) {
-                                state.checkFieldRule.remove(0);
-                                state.checkFieldRule.remove(0);
-                                state.lineNumberSeq.add(d.lineNumber);
-                                state.allThreadSeq.add(d.threadName);
-
-                            }
-                        } else if (d.threadName.compareTo(threadN) == 0 && state.checkFieldRule.size() != 0 && state.checkFieldRule.get(0).compareTo("threadBack") == 0 && state.checkFieldRule.get(1).compareTo("writeField") == 0) {
-                            if (state.threadSeq.get(0).compareTo(d.threadName) == 0 && d.writeOperation) {
-                                state.checkFieldRule.remove(0);
-                                state.checkFieldRule.remove(0);
-                                state.lineNumberSeq.add(d.lineNumber);
-                                state.allThreadSeq.add(d.threadName);
-
-                            } else if (state.threadSeq.get(0).compareTo(d.threadName) == 0 && d.readOperation) {
-                                boolean ignore = false;
-                                if (VM.getVM().getConfig().get("vm.compilerop") != null && d.sourceLine != null) {
-                                    d.sourceLine = d.sourceLine.trim();
-                                    String fieldN = d.fieldName;
-                                    if (fieldN.contains(".")) {
-                                        fieldN = fieldN.substring(fieldN.lastIndexOf(".") + 1);
-                                    }
-                                    if (d.sourceLine.contains("=")) {
-                                        String[] fields = d.sourceLine.split("=");
-                                        if (fields[0].contains(fieldN) && fields[1].contains(fieldN)) {
-                                            ignore = true;
-                                        }
-                                    } else if (d.sourceLine.contains(fieldN + "++") || d.sourceLine.contains(fieldN + "--")) {
-                                        ignore = true;
-                                    }
-                                }
-                                if (!ignore) {
-                                    state.resetFieldRule(checkFieldRule);
-                                }
-                            }
-                        }
-
-                        if (state != null && state.checkFieldRule.isEmpty()) {
-                            errors.add("Error pattern detected... " + d.lineNumber + " " + d.className + " " + d.fieldName + state.lineNumberSeq.toString() + " " + state.allThreadSeq.toString() + " " + state.log);
-                            state.resetFieldRule(checkFieldRule);
-
-                        }
-                    }
-                }
-            }
-        }
-
-        for (Node nd : myNode.children) {
-            checkFieldRule(nd, deepCloneStates(fieldStates));
-        }
-
-        for (HashMap.Entry<String, HashMap<String, FieldState>> entry : fieldStates.entrySet()) {
-
-            for (HashMap.Entry<String, FieldState> entry2 : entry.getValue().entrySet()) {
-                String key2 = entry2.getKey();
-                FieldState value = entry2.getValue();
-                value.allThreadSeq = null;
-                value.checkFieldRule = null;
-                value.threadSeq = null;
-                value.lineNumberSeq = null;
-                value = null;
-            }
-            entry = null;
-        }
-        fieldStates = null;
+        String variableName = null;
+        String className = null;
+        long instance = 0;
+        boolean writeOperation = false;
+        boolean readOperation = false;
+        String threadName = null;
+        String methodName = null;
+        int threadId = -1;
+        boolean isSynchronized = false;
+        String fileLocation = null;
+        int lineNumber = -1;
+        String packageName = null;
+        String value = null;
+        String type = null;
+        String sourceLine = null;
     }
 
-    public void checkFieldRule2(Node myNode, HashMap<String, HashMap<String, FieldState>> fieldStates) {
-        ArrayList<String> checkFieldRule = new ArrayList<>();
-        checkFieldRule.add("readField");
-        checkFieldRule.add("threadChange");
-        checkFieldRule.add("writeField");
-        checkFieldRule.add("threadBack");
-        checkFieldRule.add("readField");
+    class FieldVarGroups {
 
-        List<Data> ld = myNode.data;
-        FieldState state = null;
+        public DBObject toDBObject(int id, HashMap<String,HashSet<String>> fieldVarGroups) {
 
-        for (Data d : ld) {
-            if (threadNames.containsKey(d.fieldName)) {
-                threadNames.get(d.fieldName).add(d.threadName);
-            } else {
-                HashSet<String> threadSet = new HashSet<>();
-                threadSet.add(d.threadName);
-                threadNames.put(d.fieldName, threadSet);
+            try {
+                collection3.remove(new BasicDBObject("id", id));
+            } catch (Exception me) {
+                System.err.println("FieldVarGroups: Unable to delete due to an error: " + me);
             }
 
-            for (String threadN : threadNames.get(d.fieldName)) {
-                if (d.fieldName != null) {
+            BasicDBObject bo = new BasicDBObject();
 
-                    if (fieldStates.containsKey(d.fieldName)) {
-                        if (fieldStates.get(d.fieldName).containsKey(threadN)) {
-                            state = fieldStates.get(d.fieldName).get(threadN);
-                        } else {
-                            fieldStates.get(d.fieldName).put(threadN, new FieldState());
-                            state = fieldStates.get(d.fieldName).get(threadN);
-                            state.resetFieldRule(checkFieldRule);
-                        }
+            bo.append("id", Integer.toString(id));
 
-                    } else {
-                        fieldStates.put(d.fieldName, new HashMap<String, FieldState>());
-                        fieldStates.get(d.fieldName).put(threadN, new FieldState());
-                        state = fieldStates.get(d.fieldName).get(threadN);
-                        state.resetFieldRule(checkFieldRule);
-
-                    }
-
-                    if (state.allThreadSeq.size() <= 1 || (state.allThreadSeq.size() == 2 && state.allThreadSeq.contains(d.threadName))) {
-                        if (d.threadName.compareTo(threadN) == 0 && d.readOperation && state.checkFieldRule.size() != 0 && state.checkFieldRule.get(0).compareTo("readField") == 0) {
-                            state.threadSeq.add(d.threadName);
-                            state.checkFieldRule.remove(0);
-                            state.lineNumberSeq.add(d.lineNumber);
-                            state.allThreadSeq.add(d.threadName);
-                            state.parentId = myNode.id;
-                            state.parentDepth = myNode.depth;
-
-                        } else if (d.threadName.compareTo(threadN) != 0 && state.checkFieldRule.size() != 0 && state.checkFieldRule.get(0).compareTo("threadChange") == 0 && state.checkFieldRule.get(1).compareTo("writeField") == 0) {
-                            if (!state.threadSeq.contains(d.threadName) && d.writeOperation) {
-
-                                state.checkFieldRule.remove(0);
-                                state.checkFieldRule.remove(0);
-                                state.lineNumberSeq.add(d.lineNumber);
-                                state.allThreadSeq.add(d.threadName);
-                                state.threadSeq.add(d.threadName);
-
-                            }
-                        } else if (d.threadName.compareTo(threadN) == 0 && state.checkFieldRule.size() != 0 && state.checkFieldRule.get(0).compareTo("threadChange") == 0 && state.checkFieldRule.get(1).compareTo("writeField") == 0) {
-                            if (state.threadSeq.contains(d.threadName) && d.writeOperation) {
-                                state.resetFieldRule(checkFieldRule);
-                            }
-                        } else if (d.threadName.compareTo(threadN) == 0 && state.checkFieldRule.size() != 0 && state.checkFieldRule.get(0).compareTo("threadBack") == 0 && state.checkFieldRule.get(1).compareTo("readField") == 0) {
-                            if (state.threadSeq.get(0).compareTo(d.threadName) == 0 && d.readOperation) {
-                                state.checkFieldRule.remove(0);
-                                state.checkFieldRule.remove(0);
-                                state.lineNumberSeq.add(d.lineNumber);
-                                state.allThreadSeq.add(d.threadName);
-
-                            } else if (state.threadSeq.get(0).compareTo(d.threadName) == 0 && d.writeOperation) {
-                                state.resetFieldRule(checkFieldRule);
-
-                            }
-                        }
-
-                        if (state != null && state.checkFieldRule.isEmpty()) {
-                            errors.add("Error pattern detected... " + d.lineNumber + " " + d.className + " " + d.fieldName + state.lineNumberSeq.toString() + " " + state.allThreadSeq.toString() + " " + state.log);
-                            state.resetFieldRule(checkFieldRule);
-
-                        }
-                    }
-                }
+            for(String k:fieldVarGroups.keySet()) {
+                bo.append("var", k)
+                         .append("fields", fieldVarGroups.get(k).toArray().toString());
             }
+
+            collection3.insert(bo);
+            return bo;
         }
 
-        for (Node nd : myNode.children) {
-            checkFieldRule2(nd, deepCloneStates(fieldStates));
-        }
+        public HashMap<String,HashSet<String>> getDBObject(int id) {
+            HashMap<String,HashSet<String>> fieldVarGroups = null;
+            fieldVarGroups = new HashMap<>();
+            Document query = new Document("id", id);
 
-        for (HashMap.Entry<String, HashMap<String, FieldState>> entry : fieldStates.entrySet()) {
+            MongoCursor<Document> cursor = collection33.find(query).iterator();
 
-            for (HashMap.Entry<String, FieldState> entry2 : entry.getValue().entrySet()) {
-                String key2 = entry2.getKey();
-                FieldState value = entry2.getValue();
-                value.allThreadSeq = null;
-                value.checkFieldRule = null;
-                value.threadSeq = null;
-                value.lineNumberSeq = null;
-                value = null;
+            try {
+              while(cursor.hasNext()) {
+
+                Document next = cursor.next();
+                String var = next.get("var").toString();
+                String fields = next.get("fields").toString();
+                String[] split_string = fields.split(",");
+
+                HashSet<String> hs = new HashSet<>();
+                for(String s:split_string)
+                    hs.add(s);
+
+                fieldVarGroups.put(var, hs);
+              }
+            } finally {
+                cursor.close();
             }
-            entry = null;
-        }
-        fieldStates = null;
 
+            return fieldVarGroups;
+        }
     }
 
-    private HashMap<String, HashMap<String, FieldState>> deepCloneStates(HashMap<String, HashMap<String, FieldState>> fieldStates) {
-        HashMap<String, HashMap<String, FieldState>> fieldStatesCloned = new HashMap<>();
+    class RelationOfFieldsAndVars {
 
-        for (HashMap.Entry<String, HashMap<String, FieldState>> entry : fieldStates.entrySet()) {
+        String fieldName = null;
+        String variableName = null;
+        String className = null;
+        String threadName = null;
+        String methodName = null;
+        String packageName = null;
+        String type = null;
+        String sourceLine = null;
+        int lineNumber = -1;
 
-            HashMap<String, FieldState> fieldStatesClonedPerThread = new HashMap<>();
-            String key = entry.getKey();
-            for (HashMap.Entry<String, FieldState> entry2 : entry.getValue().entrySet()) {
-                FieldState fieldStateCloned = new FieldState();
-                String key2 = entry2.getKey();
-                FieldState value2 = entry2.getValue();
-                fieldStateCloned.allThreadSeq = DeepClone.deepClone(value2.allThreadSeq);
-                fieldStateCloned.checkFieldRule = DeepClone.deepClone(value2.checkFieldRule);
-                fieldStateCloned.threadSeq = DeepClone.deepClone(value2.threadSeq);
-                fieldStateCloned.lineNumberSeq = DeepClone.deepClone(value2.lineNumberSeq);
-                fieldStateCloned.log = value2.log;
-                fieldStateCloned.fType = value2.fType;
-                fieldStateCloned.parentId = value2.parentId;
-                fieldStateCloned.parentDepth = value2.parentDepth;
-                fieldStatesClonedPerThread.put(key2, fieldStateCloned);
+        public RelationOfFieldsAndVars copy() {
+            RelationOfFieldsAndVars cp = new RelationOfFieldsAndVars();
+
+            cp.fieldName=this.fieldName;
+            cp.variableName=this.variableName;
+            cp.className=this.className;
+            cp.threadName=this.threadName;
+            cp.methodName=this.methodName;
+            cp.packageName=this.packageName;
+            cp.type=this.type;
+            cp.sourceLine=this.sourceLine;
+            cp.lineNumber=this.lineNumber;
+
+            return cp;
+        }
+
+        public DBObject toDBObject(int id, int count) {
+
+            BasicDBObject bo = new BasicDBObject();
+
+            bo.append("id", Integer.toString(id))
+                         .append("count", count)
+                         .append("fieldName", this.fieldName)
+                         .append("variableName", this.variableName)
+                         .append("className", this.className)
+                    .append("threadName", this.threadName)
+                    .append("methodName", this.methodName)
+                    .append("packageName", this.packageName)
+                    .append("type", this.type)
+                    .append("sourceLine", this.sourceLine)
+                    .append("lineNumber", this.lineNumber);
+
+            collection2.insert(bo);
+            return bo;
+        }
+
+        public boolean getDBObject(int id, int count) {
+            Document query = new Document("id", id);
+            Document query2 = new Document("count", count);
+
+            MongoCursor<Document> cursor = collection22.find(Filters.and(query,query2)).iterator();
+
+            try {
+              if(cursor.hasNext()) {
+                Document next = cursor.next();
+                fieldName = next.get("fieldName").toString();
+                variableName = next.get("variableName").toString();
+                className = next.get("className").toString();
+                threadName = next.get("threadName").toString();
+                methodName = next.get("methodName").toString();
+                packageName = next.get("packageName").toString();
+                type = next.get("type").toString();
+                sourceLine = next.get("sourceLine").toString();
+                lineNumber = (int)next.get("lineNumber");
+                cursor.close();
+                return true;
+              } else {
+                  cursor.close();
+                  return false;
+              }
+            } finally {
+                cursor.close();
             }
-            fieldStatesCloned.put(key, fieldStatesClonedPerThread);
         }
-
-        return fieldStatesCloned;
     }
 
-    class FieldState {
-
-        public int parentId = -1;
-        public int parentDepth = -1;
-        ArrayList<String> checkFieldRule = new ArrayList<String>();
-        ArrayList<String> threadSeq = new ArrayList<String>();
-        ArrayList<Integer> lineNumberSeq = new ArrayList<Integer>();
-        ArrayList<String> allThreadSeq = new ArrayList<String>();
-        String log = "";
-        String fType = null;
-
-        public void resetFieldRule(ArrayList<String> fieldRule) {
-            checkFieldRule = DeepClone.deepClone(fieldRule);
-            threadSeq = new ArrayList<String>();
-            lineNumberSeq = new ArrayList<Integer>();
-            allThreadSeq = new ArrayList<String>();
-            fType = null;
-        }
-
-        public void initializeFieldRule() {
-            checkFieldRule = new ArrayList<String>();
-            threadSeq = new ArrayList<String>();
-            lineNumberSeq = new ArrayList<Integer>();
-            allThreadSeq = new ArrayList<String>();
-        }
-
-        public FieldState deepClone() {
-            FieldState fs = new FieldState();
-            fs.checkFieldRule = (ArrayList<String>) DeepClone.deepClone(checkFieldRule);
-            fs.threadSeq = (ArrayList<String>) DeepClone.deepClone(threadSeq);
-            fs.lineNumberSeq = (ArrayList<Integer>) DeepClone.deepClone(lineNumberSeq);
-            fs.allThreadSeq = (ArrayList<String>) DeepClone.deepClone(allThreadSeq);
-            fs.log = this.log;
-            fs.fType = this.fType;
-
-            return fs;
-        }
-
-    }
 
 }
