@@ -202,26 +202,8 @@ public class MyListener extends PropertyListenerAdapter {
     @Override
     public void instructionExecuted(VM vm, ThreadInfo ti, Instruction nextInsn, Instruction insn) {
       boolean continuerun = true;
-    /*   Search search = vm.getSearch();
 
-       id = search.getStateId();
-        depth = search.getDepth();
-System.out.println("varcheck ... ");
-        boolean found = current2.findNode(id, depth);
 
-        if (allowDepth != null && allowChild != null && allowedPaths.size() != 0) {
-                        if (allowedPaths.containsKey(depth)) {
-                            if (!allowedPaths.get(depth).contains(current2.children.size())) {
-                                ti.breakTransition(true);
-                                continuerun  = false;
-                            }
-
-                        }
-                    }*/
-
-                    if (!ti.hasChanged() && notichanges ) {
-                        continuerun  = false;
-                    }
                     if (allowThreads != null && !allowThreads.contains(ti.getName())) {
                         continuerun  = false;
                     }
