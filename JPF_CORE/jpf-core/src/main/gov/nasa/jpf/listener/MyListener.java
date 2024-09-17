@@ -214,33 +214,16 @@ public class MyListener extends PropertyListenerAdapter {
                 LocalVariableInstruction lvinsn = (LocalVariableInstruction) insn;
                         
                     LocalVarInfo vi = lvinsn.getLocalVarInfo();
-                    if(vi!=null)
+               //     if(vi!=null)
                //     System.out.println("vname : " + vi.getName());
                         
                  //   if (vi!=null)
                  //   System.out.println("LocalVariableInstruction2 " + vi.getName() + " linenumber " + insn.getLineNumber() + " " + insn.getSourceLine() + " " + insn.getSourceLocation());
-                    if (functionNames!=null)
-                   //     System.out.println("functionNames ... " + functionNames.size());
-                    for(String f : functionNames) {
-                        if (lvinsn.getSourceLine()!=null && lvinsn.getSourceLine().contains(f)) {
-                            String func = lvinsn.getSourceLine().substring(lvinsn.getSourceLine().indexOf(f), lvinsn.getSourceLine().indexOf(")"));
-                            func = func.substring(func.indexOf("(")+1);
-                            String[] pars = func.split(",");
-                            ArrayList<String> params = new ArrayList<>();
-                            for (String p : pars) {
-                                params.add(p);               
-                            }
-                            if (functionsMapping!=null)
-                              //  System.out.println("functionsMapping ... " + functionsMapping.size());
-                            functionsMapping.put(f, params);
-                            break;
-                        }
-                    }
                     
                  //   System.out.println("4444444" + functionsMapping.get(lvinsn.getMethodInfo().getName()) + " " + lvinsn.getMethodInfo().getName() + " " + functionsMapping.keySet());
                  //   if(vi!=null && functionsMapping.get(lvinsn.getMethodInfo().getName())!=null)
                  //       System.out.println("333333" + vi.getName() + fieldNames.toString() + " " + " " + functionsMapping.get(lvinsn.getMethodInfo().getName()).get(functions.get(lvinsn.getMethodInfo().getName()).indexOf(vi.getName())));
-                    if(vi!=null && (!newN.relationOfFieldsAndVarsMap.keySet().isEmpty()  && newN.relationOfFieldsAndVarsMap.containsKey(vi.getName())) || (functionsMapping.get(lvinsn.getMethodInfo().getName())!=null  &&  newN.relationOfFieldsAndVarsMap.containsKey(functionsMapping.get(lvinsn.getMethodInfo().getName()).get(functions.get(lvinsn.getMethodInfo().getName()).indexOf(vi.getName())))) || (functionsMapping.get(lvinsn.getMethodInfo().getName())!=null  &&  fieldNames.contains(functionsMapping.get(lvinsn.getMethodInfo().getName()).get(functions.get(lvinsn.getMethodInfo().getName()).indexOf(vi.getName())))) ) {
+                    if(vi!=null && !newN.relationOfFieldsAndVarsMap.keySet().isEmpty()  && newN.relationOfFieldsAndVarsMap.containsKey(vi.getName()) ) {
                     
                   //      System.out.println("555555" + vi.getName());
                         VariableData newD = new VariableData();
